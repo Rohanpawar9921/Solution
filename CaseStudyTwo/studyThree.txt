@@ -1,0 +1,190 @@
+Part 3: API Implementation – Low Stock Alerts
+
+-----------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------
+
+I. Assumptions
+
+Because the requirements are partially defined, the following assumptions are made and documented:
+
+A company can have multiple warehouses.
+
+A product can exist in multiple warehouses.
+
+“Recent sales activity” means at least one sale in the last 30 days.
+
+Low-stock threshold depends on product_type.
+
+days_until_stockout is calculated as:
+current_stock / average_daily_sales.
+
+If average daily sales is zero, the product is ignored (no alert).
+
+Each product has one primary supplier.
+
+MySQL is used as the database.
+
+-----------------------------------------------------------------------------------------
+
+II. Relevant Tables (Simplified)
+
+companies(id)
+
+warehouses(id, company_id, name)
+
+products(id, company_id, name, sku, product_type)
+
+inventory(product_id, warehouse_id, quantity)
+
+sales(product_id, warehouse_id, quantity, created_at)
+
+product_thresholds(product_type, low_stock_threshold)
+
+suppliers(id, name, contact_email)
+
+supplier_products(product_id, supplier_id)
+
+-----------------------------------------------------------------------------------------
+
+III. Approach
+
+Fetch all warehouses belonging to the company.
+
+Join inventory, products, thresholds, sales, and suppliers.
+
+Filter products where:
+
+current stock is below the defined threshold
+
+sales exist in the last 30 days
+
+Calculate average daily sales and days until stockout.
+
+Return structured alerts with supplier information.
+
+This logic is executed in a single optimized SQL query to reduce database load.
+-----------------------------------------------------------------------------------------
+
+IV. Implementation (Node.js + Express + MySQL)
+
+
+Database Connection (db.js)
+const mysql = require('mysql2/promise');
+
+const db = mysql.createPool({
+  host: 'localhost',
+  user: 'root',
+  password: 'password',
+  database: 'inventory_db'
+});
+
+module.exports = db;
+
+API Endpoint
+const express = require('express');
+const db = require('./db');
+
+const router = express.Router();
+
+/*
+ GET /api/companies/:companyId/alerts/low-stock
+
+ Assumptions:
+ - Recent sales = last 30 days
+ - Threshold varies by product_type
+ - One primary supplier per product
+*/
+router.get('/api/companies/:companyId/alerts/low-stock', async (req, res) => {
+  const { companyId } = req.params;
+
+  try {
+    const [rows] = await db.query(`
+      SELECT
+        p.id AS product_id,
+        p.name AS product_name,
+        p.sku,
+        w.id AS warehouse_id,
+        w.name AS warehouse_name,
+        i.quantity AS current_stock,
+        t.low_stock_threshold AS threshold,
+        s.id AS supplier_id,
+        s.name AS supplier_name,
+        s.contact_email,
+        IFNULL(SUM(sa.quantity) / 30, 0) AS avg_daily_sales
+      FROM warehouses w
+      JOIN inventory i ON i.warehouse_id = w.id
+      JOIN products p ON p.id = i.product_id
+      JOIN product_thresholds t ON t.product_type = p.product_type
+      JOIN supplier_products sp ON sp.product_id = p.id
+      JOIN suppliers s ON s.id = sp.supplier_id
+      LEFT JOIN sales sa
+        ON sa.product_id = p.id
+        AND sa.warehouse_id = w.id
+        AND sa.created_at >= NOW() - INTERVAL 30 DAY
+      WHERE w.company_id = ?
+      GROUP BY p.id, w.id
+      HAVING current_stock < threshold
+         AND avg_daily_sales > 0
+    `, [companyId]);
+
+    const alerts = rows.map(row => ({
+      product_id: row.product_id,
+      product_name: row.product_name,
+      sku: row.sku,
+      warehouse_id: row.warehouse_id,
+      warehouse_name: row.warehouse_name,
+      current_stock: row.current_stock,
+      threshold: row.threshold,
+      days_until_stockout: Math.ceil(
+        row.current_stock / row.avg_daily_sales
+      ),
+      supplier: {
+        id: row.supplier_id,
+        name: row.supplier_name,
+        contact_email: row.contact_email
+      }
+    }));
+
+    res.json({
+      alerts,
+      total_alerts: alerts.length
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+module.exports = router;
+-----------------------------------------------------------------------------------------
+
+V. Edge Cases Handled
+
+Products with no recent sales are excluded to avoid false alerts.
+
+Division by zero is avoided by filtering zero sales.
+
+Multiple warehouses per company are handled via grouping.
+
+Missing or invalid company IDs return an empty alert list.
+
+Single SQL query ensures good performance under load.
+
+-----------------------------------------------------------------------------------------
+
+VI. Design Justification
+
+Inventory and sales are queried together to calculate stock risk accurately.
+
+Threshold logic is externalized via product_thresholds for flexibility.
+
+Supplier data is included to enable immediate reordering.
+
+Aggregation is done at the database level for efficiency.
+
+-----------------------------------------------------------------------------------------
+
+VII. Summary
+
+This endpoint provides actionable low-stock alerts by combining real-time inventory, sales velocity, and business thresholds, while supporting multiple warehouses and supplier integration in a scalable manner.
