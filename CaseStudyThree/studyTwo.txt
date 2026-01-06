@@ -1,0 +1,203 @@
+-----------------------------------------------------------------------------------------
+I. Database Schema Design
+
+Company table
+companies (
+    id          BIGINT PRIMARY KEY,
+    name        VARCHAR(255) NOT NULL,
+    created_at  TIMESTAMP NOT NULL
+);
+
+
+Why this table exists:
+
+One company can have many warehouses.
+This table creates a clear ownership boundary.
+Everything else belongs to a company.
+
+Warehouse table
+warehouses (
+    id          BIGINT PRIMARY KEY,
+    company_id  BIGINT NOT NULL,
+    name        VARCHAR(255),
+    location    TEXT,
+    created_at  TIMESTAMP NOT NULL,
+
+    FOREIGN KEY (company_id) REFERENCES companies(id)
+);
+
+
+Why:
+
+Warehouses always belong to a company.
+Location is stored as text because address rules are not clear yet.
+Keeps schema flexible.
+
+Product table
+products (
+    id          BIGINT PRIMARY KEY,
+    company_id  BIGINT NOT NULL,
+    name        VARCHAR(255) NOT NULL,
+    sku         VARCHAR(100) NOT NULL,
+    price       DECIMAL(10,2) NOT NULL,
+    is_bundle   BOOLEAN DEFAULT FALSE,
+    created_at  TIMESTAMP NOT NULL,
+
+    UNIQUE (sku),
+    FOREIGN KEY (company_id) REFERENCES companies(id)
+);
+
+
+Why:
+
+SKU is unique as per business requirement.
+Price uses DECIMAL because money should never use float.
+is_bundle flag helps to quickly identify bundle products.
+
+Bundle composition table
+product_bundles (
+    bundle_product_id   BIGINT NOT NULL,
+    child_product_id    BIGINT NOT NULL,
+    quantity            INT NOT NULL,
+
+    PRIMARY KEY (bundle_product_id, child_product_id),
+    FOREIGN KEY (bundle_product_id) REFERENCES products(id),
+    FOREIGN KEY (child_product_id) REFERENCES products(id)
+);
+
+
+Why:
+
+This is a self-referencing many-to-many table.
+A bundle can contain many products.
+Quantity defines how many units of child product are needed.
+This design can support nested bundles also.
+
+Inventory table (current stock)
+inventory (
+    product_id      BIGINT NOT NULL,
+    warehouse_id    BIGINT NOT NULL,
+    quantity        INT NOT NULL DEFAULT 0,
+    updated_at      TIMESTAMP NOT NULL,
+
+    PRIMARY KEY (product_id, warehouse_id),
+    FOREIGN KEY (product_id) REFERENCES products(id),
+    FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
+);
+
+
+Why:
+
+One product in one warehouse should have only one row.
+Composite primary key prevents duplicate stock rows.
+Optimized for fast stock read operations.
+
+Inventory history table (audit trail)
+inventory_movements (
+    id          BIGINT PRIMARY KEY,
+    product_id  BIGINT NOT NULL,
+    warehouse_id BIGINT NOT NULL,
+    change_qty  INT NOT NULL,
+    reason      VARCHAR(50),
+    created_at  TIMESTAMP NOT NULL,
+
+    FOREIGN KEY (product_id) REFERENCES products(id),
+    FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
+);
+
+
+Why:
+
+This table stores every inventory change.
+Helps in debugging, audits, and analytics.
+Append-only design is safe and reliable.
+
+Supplier table
+suppliers (
+    id          BIGINT PRIMARY KEY,
+    name        VARCHAR(255) NOT NULL,
+    contact_info TEXT,
+    created_at  TIMESTAMP NOT NULL
+);
+
+
+Why:
+
+Suppliers are separate entities.
+Contact info is flexible text.
+
+Supplier and product mapping table
+supplier_products (
+    supplier_id     BIGINT NOT NULL,
+    product_id      BIGINT NOT NULL,
+    cost_price      DECIMAL(10,2),
+    lead_time_days  INT,
+
+    PRIMARY KEY (supplier_id, product_id),
+    FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+    FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
+
+Why:
+
+Many suppliers can supply many products.
+Cost and lead time can differ per supplier.
+This keeps supplier-specific data clean.
+
+---------------------------------------------------------------------------------------------------------------
+II. Gaps and questions for product team
+
+Business questions
+
+Can one supplier serve multiple companies?
+Is SKU global or unique per company?
+Does a bundle have its own inventory or derived from child products?
+Can a bundle contain another bundle?
+Is negative inventory allowed or not?
+Do we need reserved stock and available stock separately?
+Is price company-specific or global?
+Can warehouses transfer stock directly between them?
+
+Operational questions
+
+Who is allowed to change inventory, system or humans?
+Do we need soft deletes for records?
+How long should inventory history be stored?
+Do we support multi-currency pricing in future?
+
+------------------------------------------------------------------------------------------------------------------
+
+III. Design decisions and justification
+
+
+Why separate inventory and inventory_movements
+
+Inventory table is optimized for fast reads.
+Inventory movements keep full history.
+This is standard industry practice.
+
+Why composite primary key in inventory
+PRIMARY KEY (product_id, warehouse_id)
+
+
+This prevents duplicate rows.
+It enforces business rules at database level.
+
+Why bundle table instead of JSON
+
+Keeps referential integrity.
+Data is queryable using SQL.
+Only valid products can be part of bundle.
+
+Important indexes to add
+CREATE INDEX idx_inventory_product ON inventory(product_id);
+CREATE INDEX idx_inventory_warehouse ON inventory(warehouse_id);
+CREATE INDEX idx_inventory_movements_created ON inventory_movements(created_at);
+
+
+Why:
+
+Faster stock lookup by product.
+Fast warehouse dashboards.
+Efficient reporting and analytics.

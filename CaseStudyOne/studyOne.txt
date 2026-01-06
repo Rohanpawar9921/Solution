@@ -1,0 +1,147 @@
+Problems Found (Technical + Business Logic) :
+-----------------------------------------------------------------------------------------
+Issue 1: No input validation
+
+data = request.json
+name = data['name']
+
+
+Problem:
+This code assumes request.json is always present.
+It also assumes all required keys exist and data types are correct.
+
+What happens in real life:
+If client sends wrong or missing data, API crashes with KeyError.
+You will see random 500 errors in production which are very hard to debug.
+-----------------------------------------------------------------------------------------
+Issue 2: SKU uniqueness is not checked
+
+sku = data['sku']
+
+
+Problem:
+There is no check if this SKU already exists in database.
+But business rule clearly says SKU must be unique.
+
+Impact:
+Duplicate SKUs get created.
+Inventory becomes wrong.
+Sales reports and analytics also become incorrect.
+-----------------------------------------------------------------------------------------
+Issue 3: Price stored as float (dangerous)
+
+price = data['price']
+
+
+Problem:
+Price is most likely coming as float.
+Floats are very bad for money related values.
+
+Impact:
+Rounding issues happen.
+Customer billing can be wrong.
+Accounting and audits becomes a nightmare.
+-----------------------------------------------------------------------------------------
+Issue 4: Two separate commits (big production bug)
+
+db.session.commit()
+...
+db.session.commit()
+
+
+Problem:
+Product is saved first.
+Inventory is saved later.
+
+If inventory save fails, product already exists.
+
+Impact:
+Product without inventory is created.
+Database becomes inconsistent.
+Manual cleanup required.
+
+This is the biggest production issue here.
+-----------------------------------------------------------------------------------------
+Issue 5: Product and warehouse relation is wrong
+
+product = Product(...)
+inventory = Inventory(product_id=product.id, warehouse_id=...)
+
+
+Problem:
+Product creation is tied to only one warehouse.
+But in real systems, product can exist in multiple warehouses.
+
+Impact:
+Adding same product to new warehouse becomes messy.
+Forces duplicate products which is very bad design.
+-----------------------------------------------------------------------------------------
+Issue 6: No check if warehouse exists
+
+warehouse_id = data['warehouse_id']
+
+
+
+Problem:
+No validation if warehouse ID actually exists in database.
+
+Impact:
+Foreign key error at runtime.
+Random 500 errors in production.
+-----------------------------------------------------------------------------------------
+Issue 7: Optional fields not handled
+
+Problem:
+Code assumes initial_quantity is always present.
+But requirement says some fields are optional.
+
+Impact:
+Valid requests fail.
+API becomes very rigid and breaks real use cases.
+-----------------------------------------------------------------------------------------
+Issue 8: No error handling or rollback
+
+Problem:
+If any exception happens, session is left in dirty state.
+
+Impact:
+DB connection gets poisoned.
+Next requests also start failing until restart.
+-----------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------
+
+
+2️ Production Risk Summary
+-----------------------------------------------------------------------------------------
+Missing validation → random 500 errors
+
+No SKU uniqueness → broken product catalog
+
+Float prices → money loss
+
+Multiple commits → inconsistent database
+
+Wrong warehouse design → scaling problems
+
+No rollback → database corruption
+-----------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------
+3️ Corrected Version (Production Ready)
+
+Fixes applied properly:
+
+Proper input validation
+
+Decimal used for price
+
+SKU uniqueness check added
+
+Single atomic transaction
+
+Optional fields handled safely
+
+Warehouse existence validated
+
+Rollback on error
+
+This version is safe to run in real production.
